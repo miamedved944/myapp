@@ -1,9 +1,7 @@
-// FINAL VERSION - Notes App (for assignment)
-// Clean, simple, matches requirements (2 screens + add/edit)
+
 
 package com.example.myapplication
 
-import android.R.attr.defaultValue
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,18 +11,92 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
 import androidx.navigation.NavType
-import androidx.navigation.compose.*
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-// DATA CLASS
 data class Note(
     val id: Int,
     val title: String,
-    val description: String
+    val content: String,
+    val createdAt: String
 )
+
+class NoteRepository {
+    private val notes = mutableStateListOf(
+        Note(1, "OOTD Planner", "Plan your outfits.", currentDate()),
+        Note(2, "Nail Ideas", "Save nail designs.", currentDate()),
+        Note(3, "Journal", "Write your thoughts.", currentDate())
+    )
+
+    fun getNotes(): List<Note> = notes
+
+    fun getNoteById(id: Int): Note? {
+        return notes.find { it.id == id }
+    }
+
+    fun addNote(title: String, content: String) {
+        val newId = (notes.maxOfOrNull { it.id } ?: 0) + 1
+        notes.add(Note(newId, title, content, currentDate()))
+    }
+
+    fun updateNote(id: Int, title: String, content: String) {
+        val index = notes.indexOfFirst { it.id == id }
+
+        if (index != -1) {
+            val oldNote = notes[index]
+            notes[index] = oldNote.copy(
+                title = title,
+                content = content
+            )
+        }
+    }
+
+    companion object {
+        fun currentDate(): String {
+            val formatter = SimpleDateFormat("dd.MM.yyyy. HH:mm", Locale.getDefault())
+            return formatter.format(Date())
+        }
+    }
+}
+
+val noteRepository: NoteRepository by lazy {
+    NoteRepository()
+}
+
+class ListViewModel(
+    private val repository: NoteRepository
+) : ViewModel() {
+
+    val notes: List<Note>
+        get() = repository.getNotes()
+}
+
+class EditViewModel(
+    private val repository: NoteRepository
+) : ViewModel() {
+
+    fun getNote(id: Int): Note? {
+        return repository.getNoteById(id)
+    }
+
+    fun saveNote(id: Int, title: String, content: String) {
+        if (id == -1) {
+            repository.addNote(title, content)
+        } else {
+            repository.updateNote(id, title, content)
+        }
+    }
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,82 +111,60 @@ class MainActivity : ComponentActivity() {
 fun App() {
     val navController = rememberNavController()
 
-    // STATE (list of notes)
-    var notes by remember {
-        mutableStateOf(
-            mutableListOf(
-                Note(1, "OOTD Planner", "Plan your outfits."),
-                Note(2, "Nail Ideas", "Save nail designs."),
-                Note(3, "Journal", "Write your thoughts.")
-            )
-        )
+    val listViewModel = remember {
+        ListViewModel(noteRepository)
     }
 
-    NavHost(navController, startDestination = "list") {
+    val editViewModel = remember {
+        EditViewModel(noteRepository)
+    }
 
-        // SCREEN 1
+    NavHost(
+        navController = navController,
+        startDestination = "list"
+    ) {
         composable("list") {
             ListScreen(
-                notes = notes,
-                onAdd = { navController.navigate("editor") },
+                viewModel = listViewModel,
+                onAdd = {
+                    navController.navigate("editor/-1")
+                },
                 onClick = { note ->
                     navController.navigate("editor/${note.id}")
                 }
             )
         }
 
-        // SCREEN 2 (EDIT / ADD)
         composable(
-            "editor/{id}",
+            route = "editor/{id}",
             arguments = listOf(
                 navArgument("id") {
                     type = NavType.IntType
-                    defaultValue = -1
                 }
             )
-        ) { backStack ->
+        ) { backStackEntry ->
 
-            val id = backStack.arguments?.getInt("id") ?: -1
-            val existing = notes.find { it.id == id }
+            val id = backStackEntry.arguments?.getInt("id") ?: -1
 
             EditorScreen(
-                note = existing,
-                onSave = { title, desc ->
-                    if (existing == null) {
-                        val newId = (notes.maxOfOrNull { it.id } ?: 0) + 1
-                        notes = (notes + Note(newId, title, desc)).toMutableList()
-                    } else {
-                        notes = notes.map {
-                            if (it.id == id) Note(id, title, desc) else it
-                        }.toMutableList()
-                    }
+                id = id,
+                viewModel = editViewModel,
+                onDone = {
                     navController.popBackStack()
-                },
-                onBack = { navController.popBackStack() }
-            )
-        }
-
-        composable("editor") {
-            EditorScreen(
-                note = null,
-                onSave = { title, desc ->
-                    val newId = (notes.maxOfOrNull { it.id } ?: 0) + 1
-                    notes = (notes + Note(newId, title, desc)).toMutableList()
-                    navController.popBackStack()
-                },
-                onBack = { navController.popBackStack() }
+                }
             )
         }
     }
 }
 
-// SCREEN 1
 @Composable
 fun ListScreen(
-    notes: List<Note>,
+    viewModel: ListViewModel,
     onAdd: () -> Unit,
     onClick: (Note) -> Unit
 ) {
+    val notes = viewModel.notes
+
     Scaffold(
         floatingActionButton = {
             FloatingActionButton(onClick = onAdd) {
@@ -135,10 +185,24 @@ fun ListScreen(
                         .fillMaxWidth()
                         .clickable { onClick(note) }
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(note.title, style = MaterialTheme.typography.titleMedium)
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Text(
+                            text = note.title,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text(note.description)
+
+                        Text(text = note.content)
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Text(
+                            text = "Created: ${note.createdAt}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
             }
@@ -146,25 +210,33 @@ fun ListScreen(
     }
 }
 
-// SCREEN 2
 @Composable
 fun EditorScreen(
-    note: Note?,
-    onSave: (String, String) -> Unit,
-    onBack: () -> Unit
+    id: Int,
+    viewModel: EditViewModel,
+    onDone: () -> Unit
 ) {
-    var title by remember { mutableStateOf(note?.title ?: "") }
-    var description by remember { mutableStateOf(note?.description ?: "") }
+    val existingNote = viewModel.getNote(id)
+
+    var title by remember {
+        mutableStateOf(existingNote?.title ?: "")
+    }
+
+    var content by remember {
+        mutableStateOf(existingNote?.content ?: "")
+    }
+
+    val createdAt = existingNote?.createdAt ?: NoteRepository.currentDate()
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-
-        Button(onClick = onBack) {
-            Text("Back")
-        }
+        Text(
+            text = if (id == -1) "New Note" else "Edit Note",
+            style = MaterialTheme.typography.titleLarge
+        )
 
         Spacer(modifier = Modifier.height(12.dp))
 
@@ -178,25 +250,33 @@ fun EditorScreen(
         Spacer(modifier = Modifier.height(12.dp))
 
         OutlinedTextField(
-            value = description,
-            onValueChange = { description = it },
-            label = { Text("Description") },
+            value = content,
+            onValueChange = { content = it },
+            label = { Text("Content") },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(150.dp)
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            text = "Created: $createdAt",
+            style = MaterialTheme.typography.bodySmall
         )
 
         Spacer(modifier = Modifier.height(20.dp))
 
         Button(
             onClick = {
-                if (title.isNotBlank() && description.isNotBlank()) {
-                    onSave(title, description)
+                if (title.isNotBlank() && content.isNotBlank()) {
+                    viewModel.saveNote(id, title, content)
+                    onDone()
                 }
             },
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Save")
+            Text("Done")
         }
     }
 }
